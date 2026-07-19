@@ -39,10 +39,14 @@ PING_TARGETS = [
     ("谷歌", "www.google.com"),
 ]
 
-# IP 信息查询 API
-IP_API = "https://api.ip.sb/geoip"
-IPV4_API = "https://api-ipv4.ip.sb/ip"
-IPV6_API = "https://api-ipv6.ip.sb/ip"
+# IP 信息查询 API（多路备用）
+IP_APIS = [
+    ("https://api.ip.sb/geoip", "ip.sb"),
+    ("https://ip-api.com/json/?fields=query,city,country,countryCode,isp,org,as,asname", "ip-api"),
+    ("https://ipinfo.io/json", "ipinfo"),
+]
+IPV4_APIS = ["https://api-ipv4.ip.sb/ip", "https://api4.ipify.org"]
+IPV6_APIS = ["https://api-ipv6.ip.sb/ip", "https://api6.ipify.org"]
 IP_ISP_API = "https://whois.pconline.com.cn/ipJson.jsp?json=true"
 
 # 下载/上传并发流数
@@ -126,6 +130,26 @@ def get_primary_interface() -> Optional[InterfaceInfo]:
     if not ifaces:
         return None
     return max(ifaces, key=lambda i: i.bytes_sent + i.bytes_recv)
+
+
+def get_platform() -> str:
+    """返回人类可读的平台名称"""
+    sys_ = platform.system()
+    if sys_ == "Windows":
+        return f"Windows {platform.release()} ({platform.machine()})"
+    elif sys_ == "Darwin":
+        import subprocess
+        try:
+            ver = subprocess.run(
+                ["sw_vers", "-productVersion"], capture_output=True, text=True, timeout=3
+            ).stdout.strip()
+            arch = platform.machine()
+            return f"macOS {ver} ({arch})"
+        except Exception:
+            return f"macOS ({platform.machine()})"
+    elif sys_ == "Linux":
+        return f"Linux ({platform.machine()})"
+    return sys_
 
 
 # ================================================================
@@ -453,40 +477,78 @@ class IPInfoWorker(QThread):
         data = {"ipv4": "", "ipv6": "", "isp": "", "country": "", "city": "", "org": ""}
         if not self._running:
             return
-        try:
-            resp = requests.get(IP_API, timeout=5, headers=get_headers())
-            if resp.status_code == 200:
-                j = resp.json()
-                data["ipv4"] = j.get("ip", "")
-                data["country"] = j.get("country", "")
-                data["city"] = j.get("city", "")
-                data["org"] = j.get("org", "")
-                data["asn"] = j.get("asn", "")
-                data["asn_org"] = j.get("asn_org", "")
-                data["country_code"] = j.get("country_code", "")
-        except Exception:
-            pass
 
-        if not self._running:
-            return
-        try:
-            r6 = requests.get(IPV6_API, timeout=3, headers=get_headers())
-            if r6.status_code == 200:
-                data["ipv6"] = r6.text.strip()
-        except Exception:
-            data["ipv6"] = "不支持"
+        # 多路备用 IP API
+        for api_url, name in IP_APIS:
+            if not self._running:
+                return
+            try:
+                resp = requests.get(api_url, timeout=5, headers=get_headers())
+                if resp.status_code == 200:
+                    j = resp.json()
+                    if name == "ip-api":
+                        data["ipv4"] = j.get("query", "")
+                        data["country"] = j.get("country", "")
+                        data["city"] = j.get("city", "")
+                        data["org"] = j.get("org", "") or j.get("isp", "")
+                        data["asn"] = j.get("as", "").replace("AS", "") if j.get("as") else ""
+                        data["asn_org"] = j.get("asname", "") or j.get("org", "")
+                        data["country_code"] = j.get("countryCode", "")
+                    elif name == "ipinfo":
+                        data["ipv4"] = j.get("ip", "")
+                        data["country"] = j.get("country", "")
+                        data["city"] = j.get("city", "")
+                        data["org"] = j.get("org", "")
+                        asn_raw = j.get("org", "")
+                        if "AS" in asn_raw:
+                            parts = asn_raw.split(" ", 1)
+                            data["asn"] = parts[0].replace("AS", "")
+                            data["asn_org"] = parts[1] if len(parts) > 1 else ""
+                        data["country_code"] = ""
+                    else:  # ip.sb
+                        data["ipv4"] = j.get("ip", "")
+                        data["country"] = j.get("country", "")
+                        data["city"] = j.get("city", "")
+                        data["org"] = j.get("org", "")
+                        data["asn"] = j.get("asn", "")
+                        data["asn_org"] = j.get("asn_org", "")
+                        data["country_code"] = j.get("country_code", "")
+                    if data.get("ipv4"):
+                        break  # 拿到 IP 就跳出
+            except Exception as e:
+                log.debug(f"IP API {name} 失败: {e}")
 
-        if not self._running:
-            return
-        try:
-            r_cn = requests.get(IP_ISP_API, timeout=3)
-            if r_cn.status_code == 200 and "json" in r_cn.headers.get("Content-Type", ""):
-                j = r_cn.json()
-                addr = j.get("addr", "")
-                if addr:
-                    data["isp"] = addr
-        except Exception:
-            pass
+        # IPv6
+        if self._running:
+            for api in IPV6_APIS:
+                try:
+                    r6 = requests.get(api, timeout=3, headers=get_headers())
+                    if r6.status_code == 200:
+                        ip6 = r6.text.strip()
+                        if ip6:
+                            data["ipv6"] = ip6
+                            break
+                except Exception:
+                    continue
+            if not data.get("ipv6"):
+                data["ipv6"] = "不支持"
+
+        # 中文 ISP（仅国内可用，失败不阻塞）
+        if self._running:
+            try:
+                r_cn = requests.get(IP_ISP_API, timeout=3)
+                if r_cn.status_code == 200:
+                    # pconline 返回 GBK 编码
+                    r_cn.encoding = "gbk"
+                    try:
+                        j = r_cn.json()
+                        addr = j.get("addr", "")
+                        if addr:
+                            data["isp"] = addr
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         if self._running:
             self.result.emit(data)
@@ -527,21 +589,23 @@ class NetCheckWorker(QThread):
 
         if not self._running:
             return
-        for key, url, lat_key in [
-            ("ipv4_http", IPV4_API, "ipv4_latency"),
-            ("ipv6_http", IPV6_API, "ipv6_latency"),
+        for key, urls, lat_key in [
+            ("ipv4_http", IPV4_APIS, "ipv4_latency"),
+            ("ipv6_http", IPV6_APIS, "ipv6_latency"),
         ]:
             if not self._running:
                 return
-            try:
-                start = time.perf_counter()
-                r = requests.get(url, timeout=5, headers=get_headers())
-                elapsed = (time.perf_counter() - start) * 1000
-                if r.status_code == 200:
-                    checks[key] = True
-                    checks[lat_key] = round(elapsed, 1)
-            except Exception:
-                checks[key] = False
+            for url in urls:
+                try:
+                    start = time.perf_counter()
+                    r = requests.get(url, timeout=5, headers=get_headers())
+                    elapsed = (time.perf_counter() - start) * 1000
+                    if r.status_code == 200:
+                        checks[key] = True
+                        checks[lat_key] = round(elapsed, 1)
+                        break
+                except Exception:
+                    continue
 
         if self._running:
             self.result.emit(checks)

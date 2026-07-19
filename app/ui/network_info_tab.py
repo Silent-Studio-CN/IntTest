@@ -11,7 +11,7 @@ from qfluentwidgets import (
     PrimaryPushButton, SubtitleLabel, InfoBar, ComboBox,
     FluentIcon as FIF,
 )
-from app.core.workers import get_primary_interface
+from app.core.workers import get_primary_interface, get_platform
 from app.core.exporter import do_export, guess_extension
 
 
@@ -104,7 +104,7 @@ class NetworkInfoTab(QWidget):
         vbox.addWidget(StrongBodyLabel("📡 本地网络接口"))
         self.local_rows = {}
         for label, key in [
-            ("接口名称","iface_name"),("接口类型","iface_type"),
+            ("操作系统","platform"),("接口名称","iface_name"),("接口类型","iface_type"),
             ("链路速率","iface_speed"),("IP 地址","iface_ip"),("MAC 地址","iface_mac"),
         ]:
             row = InfoRow(label,"--","#888")
@@ -140,6 +140,7 @@ class NetworkInfoTab(QWidget):
         self._load_local()
 
     def _load_local(self):
+        self.local_rows["platform"].set_value(get_platform())
         p = get_primary_interface()
         if p:
             self.local_rows["iface_name"].set_value(p.name)

@@ -86,7 +86,7 @@ class SettingsTab(QWidget):
         c_layout.setAlignment(Qt.AlignCenter)
         c_layout.setSpacing(6)
 
-        ver_lbl = StrongBodyLabel("Internet Test v2.1", copyright_card)
+        ver_lbl = StrongBodyLabel("Internet Test v2.3.0", copyright_card)
         ver_lbl.setAlignment(Qt.AlignCenter)
         ver_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #e0e0e0; background: transparent;")
 

@@ -5,6 +5,7 @@
 *.zip
 dist_arm64/
 dist_x64/
+dmg/
 
 ## Python
 __pycache__/
