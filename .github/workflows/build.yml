@@ -1,0 +1,44 @@
+name: Build and Release Windows
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: 'x64'
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\Nuitka
+            .venv
+          key: ${{ runner.os }}-nuitka-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          .venv\Scripts\activate
+          pip install nuitka PySide6-Fluent-Widgets psutil requests
+
+      - name: Compile x64
+        shell: pwsh
+        run: |
+          .venv\Scripts\activate
+          nuitka --standalone --onefile --enable-plugin=pyside6 --windows-console-mode=disable --output-dir=dist_x64 --product-name=IntTest --file-version=${{ github.ref_name }} --company-name=SilentStudio main.py
+          Move-Item dist_x64/main.exe IntTest_x64.exe -Force
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: IntTest_x64.exe
