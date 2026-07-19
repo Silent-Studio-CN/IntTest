@@ -1,0 +1,25 @@
+# IntTest — 网络连通性与速度测试工具
+
+## 构建产物
+*.exe
+*.zip
+dist_arm64/
+dist_x64/
+
+## Python
+__pycache__/
+*.pyc
+*.pyo
+.venv*/
+*.egg-info/
+dist/
+
+## IDE
+.vs/
+.vscode/
+.idea/
+*.swp
+
+## OS
+Thumbs.db
+.DS_Store
